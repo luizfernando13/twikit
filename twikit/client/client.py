@@ -3802,25 +3802,47 @@ class Client:
 
         notifications = []
 
+        # Notificações padrão
         for notification in global_objects.get('notifications', {}).values():
             user_actions = notification['template']['aggregateUserActionsV1']
             target_objects = user_actions['targetObjects']
             if target_objects and 'tweet' in target_objects[0]:
                 tweet_id = target_objects[0]['tweet']['id']
-                tweet = tweets[tweet_id]
+                tweet = tweets.get(tweet_id)
             else:
                 tweet = None
 
             from_users  = user_actions['fromUsers']
             if from_users and 'user' in from_users[0]:
                 user_id = from_users[0]['user']['id']
-                user = users[user_id]
+                user = users.get(user_id)
             else:
                 user = None
 
             notifications.append(Notification(self, notification, tweet, user))
 
+        # Notificações de menção vindas do timeline/instructions
         entries = find_dict(response, 'entries', find_one=True)[0]
+        for entry in entries:
+            content = entry.get('content', {})
+            item = content.get('item', {})
+            client_event_info = item.get('clientEventInfo', {})
+            element = client_event_info.get('element')
+            if element == 'user_mentioned_you':
+                tweet_id = item.get('content', {}).get('tweet', {}).get('id')
+                tweet = tweets.get(str(tweet_id)) or tweets.get(tweet_id)
+                user = None
+                if tweet and hasattr(tweet, 'user'):
+                    user = tweet.user
+                notif_data = {
+                    'id': entry.get('entryId'),
+                    'timestampMs': entry.get('sortIndex'),
+                    'icon': {'id': 'mention_icon'},
+                    'message': {'text': getattr(tweet, 'full_text', '') if tweet else ''},
+                    'template': {'aggregateUserActionsV1': {'targetObjects': [{'tweet': {'id': tweet_id}}] if tweet_id else [], 'fromUsers': [{'user': {'id': getattr(user, 'id', None)}}] if user else []}}
+                }
+                notifications.append(Notification(self, notif_data, tweet, user))
+
         cursor_bottom_entry = [
             i for i in entries
             if i['entryId'].startswith('cursor-bottom')
