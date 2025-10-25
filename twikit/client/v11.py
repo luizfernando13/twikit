@@ -42,6 +42,8 @@ class Endpoint:
     DM_INBOX = f'https://{DOMAIN}/i/api/1.1/dm/inbox_initial_state.json'
     DM_CONVERSATION = f'https://{DOMAIN}/i/api/1.1/dm/conversation/{{}}.json'
     CONVERSATION_UPDATE_NAME = f'https://{DOMAIN}/i/api/1.1/dm/conversation/{{}}/update_name.json'
+    UPDATE_LAST_SEEN_EVENT_ID = f'https://x.com/i/api/1.1/dm/update_last_seen_event_id.json'
+    MARK_READ = f'https://x.com/i/api/1.1/dm/conversation/{{}}/mark_read.json'
     NOTIFICATIONS_ALL = f'https://{DOMAIN}/i/api/2/notifications/all.json'
     NOTIFICATIONS_VERIFIED = f'https://{DOMAIN}/i/api/2/notifications/verified.json'
     NOTIFICATIONS_MENTIONS = f'https://{DOMAIN}/i/api/2/notifications/mentions.json'
@@ -520,7 +522,7 @@ class V11Client:
         dict
             JSON response containing DM conversations, messages, and timelines.
         """
-        endpoint = "https://x.com/i/api/1.1/dm/inbox_initial_state.json"
+        endpoint = Endpoint.DM_INBOX
         payload = {
             "nsfw_filtering_enabled": "false",
             "include_profile_interstitial_type": "1",
@@ -581,7 +583,7 @@ class V11Client:
             JSON response from both endpoints.
         """
         # First: update_last_seen_event_id.json
-        endpoint_update = "https://x.com/i/api/1.1/dm/update_last_seen_event_id.json"
+        endpoint_update = Endpoint.UPDATE_LAST_SEEN_EVENT_ID
         headers = self.base._base_headers.copy()
         headers["content-type"] = "application/x-www-form-urlencoded"
         headers["x-csrf-token"] = self.base._get_csrf_token()
@@ -593,7 +595,7 @@ class V11Client:
         response_update, _ = await self.base.request("POST", endpoint_update, data=payload_update, headers=headers)
 
         # Second: mark_read.json
-        endpoint_mark_read = f"https://x.com/i/api/1.1/dm/conversation/{conversation_id}/mark_read.json"
+        endpoint_mark_read = Endpoint.MARK_READ.format(conversation_id)
         payload_mark_read = {
             "conversationId": conversation_id,
             "last_read_event_id": last_seen_event_id
