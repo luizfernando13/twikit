@@ -510,3 +510,97 @@ class V11Client:
             Endpoint.USER_STATE,
             headers=self.base._base_headers
         )
+
+
+    async def get_dm_inbox_initial_state(self) -> dict:
+        """
+        Fetch the initial state of the DM inbox using /i/api/1.1/dm/inbox_initial_state.json.
+        Returns:
+        -------
+        dict
+            JSON response containing DM conversations, messages, and timelines.
+        """
+        endpoint = "https://x.com/i/api/1.1/dm/inbox_initial_state.json"
+        payload = {
+            "nsfw_filtering_enabled": "false",
+            "include_profile_interstitial_type": "1",
+            "include_blocking": "1",
+            "include_blocked_by": "1",
+            "include_followed_by": "1",
+            "include_want_retweets": "1",
+            "include_mute_edge": "1",
+            "include_can_dm": "1",
+            "include_can_media_tag": "1",
+            "include_ext_is_blue_verified": "1",
+            "include_ext_verified_type": "1",
+            "include_ext_profile_image_shape": "1",
+            "skip_status": "1",
+            "dm_secret_conversations_enabled": "false",
+            "krs_registration_enabled": "false",
+            "cards_platform": "Web-12",
+            "include_cards": "1",
+            "include_ext_alt_text": "true",
+            "include_ext_limited_action_results": "true",
+            "include_quote_count": "true",
+            "include_reply_count": "1",
+            "tweet_mode": "extended",
+            "include_ext_views": "true",
+            "dm_users": "true",
+            "include_groups": "true",
+            "include_inbox_timelines": "true",
+            "include_ext_media_color": "true",
+            "supports_reactions": "true",
+            "supports_edit": "true",
+            "include_ext_edit_control": "true",
+            "include_ext_business_affiliations_label": "true",
+            "include_ext_parody_commentary_fan_label": "true",
+            "ext": "mediaColor,altText,mediaStats,highlightedLabel,parodyCommentaryFanLabel,voiceInfo,birdwatchPivot,superFollowMetadata,unmentionInfo,editControl,article"
+        }
+        headers = self.base._base_headers.copy()
+        headers["x-csrf-token"] = self.base._get_csrf_token()
+        response_data, _ = await self.base.request("GET", endpoint, params=payload, headers=headers)
+        return response_data
+
+    async def update_last_seen_event_id(self, conversation_id: str, last_seen_event_id: str, trusted_last_seen_event_id: str) -> dict:
+        """
+        Update the last seen event id for a DM conversation and mark the last message as read.
+        This sends requests to both update_last_seen_event_id.json and mark_read.json endpoints.
+
+        Parameters:
+        ----------
+        conversation_id : str
+            The ID of the DM conversation.
+        last_seen_event_id : str
+            The event ID of the last seen message.
+        trusted_last_seen_event_id : str
+            The trusted event ID of the last seen message.
+
+        Returns:
+        -------
+        dict
+            JSON response from both endpoints.
+        """
+        # First: update_last_seen_event_id.json
+        endpoint_update = "https://x.com/i/api/1.1/dm/update_last_seen_event_id.json"
+        headers = self.base._base_headers.copy()
+        headers["content-type"] = "application/x-www-form-urlencoded"
+        headers["x-csrf-token"] = self.base._get_csrf_token()
+        payload_update = {
+            "conversation_id": conversation_id,
+            "last_seen_event_id": last_seen_event_id,
+            "trusted_last_seen_event_id": trusted_last_seen_event_id
+        }
+        response_update, _ = await self.base.request("POST", endpoint_update, data=payload_update, headers=headers)
+
+        # Second: mark_read.json
+        endpoint_mark_read = f"https://x.com/i/api/1.1/dm/conversation/{conversation_id}/mark_read.json"
+        payload_mark_read = {
+            "conversationId": conversation_id,
+            "last_read_event_id": last_seen_event_id
+        }
+        response_mark_read, _ = await self.base.request("POST", endpoint_mark_read, data=payload_mark_read, headers=headers)
+
+        return {
+            "update_last_seen_event_id": response_update,
+            "mark_read": response_mark_read
+        }
