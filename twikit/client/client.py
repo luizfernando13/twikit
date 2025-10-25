@@ -1613,7 +1613,7 @@ class Client:
                                 continue
                             replies.append(rpl)
                         if 'cursor' in reply.get('entryId'):
-                            sr_cursor = reply['item']['itemContent']['value']
+                            sr_cursor = reply['item']['value']
                             show_replies = partial(
                                 self._show_more_replies,
                                 tweet_id,
@@ -1632,7 +1632,7 @@ class Client:
 
         if entries[-1]['entryId'].startswith('cursor'):
             # if has more replies
-            reply_next_cursor = entries[-1]['content']['itemContent']['value']
+            reply_next_cursor = entries[-1]['content']['value']
             _fetch_more_replies = partial(self._get_more_replies,
                                           tweet_id, reply_next_cursor)
         else:
@@ -1676,6 +1676,16 @@ class Client:
         for tweet_result in tweet_results:
             results.append(tweet_from_data(self, tweet_result))
         return results
+    
+    async def get_dm_inbox_initial_state(self):
+        """
+        Expose DM inbox initial state from V11Client.
+        Returns:
+        -------
+        dict
+            JSON response containing DM conversations, messages, and timelines.
+        """
+        return await self.v11.get_dm_inbox_initial_state()
 
     async def get_scheduled_tweets(self) -> list[ScheduledTweet]:
         """
@@ -2129,6 +2139,20 @@ class Client:
         """
         _, response = await self.gql.unfavorite_tweet(tweet_id)
         return response
+    
+    async def update_last_seen_event_id(self, conversation_id: str, last_seen_event_id: str, trusted_last_seen_event_id: str) -> dict:
+        """
+        Update the last seen event ID for a DM conversation.
+
+        Parameters:
+            conversation_id (str): DM conversation ID
+            last_seen_event_id (str): Last event ID seen
+            trusted_last_seen_event_id (str): Last trusted event ID seen
+
+        Returns:
+            dict: JSON response from the request
+        """
+        return await self.v11.update_last_seen_event_id(conversation_id, last_seen_event_id, trusted_last_seen_event_id)
 
     async def retweet(self, tweet_id: str) -> Response:
         """
