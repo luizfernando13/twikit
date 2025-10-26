@@ -475,7 +475,22 @@ class V11Client:
             headers=headers
         )
 
+    async def refresh_badge_count(self):
+        # Adapte os headers/cookies conforme necessário!
+        headers = self.base._base_headers.copy()
+        params = {
+            "supports_ntab_urt": "1",
+            "include_xchat_count": "1"
+        }
+        await self.base.get(
+            f"https://x.com/i/api/2/badge_count/badge_count.json",
+            params=params,
+            headers=headers
+        )
+
     async def _notifications(self, endpoint, count, cursor):
+        # Chama o refresh antes de buscar notificações
+        await self.refresh_badge_count()
         params = {'count': count}
         if cursor is not None:
             params['cursor'] = cursor
