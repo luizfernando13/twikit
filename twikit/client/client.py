@@ -3810,44 +3810,71 @@ class Client:
             'Mentions': self.v11.notifications_mentions
         }[type]
         response, _ = await f(count, cursor)
+        # print(f"[DEBUG] Response: {response}")
 
-        global_objects = response['globalObjects']
-        users = {
-            id: User(self, build_user_data(data))
-            for id, data in global_objects.get('users', {}).items()
-        }
+        global_objects = response.get('globalObjects')
+        if not global_objects:
+            global_objects = {}
+        
+        users = {}
+        for id, data in global_objects.get('users', {}).items():
+            try:
+                users[id] = User(self, build_user_data(data))
+            except Exception as e:
+                # Se falhar o parse de um usuário específico, ignora e continua
+                # print(f"[DEBUG] Erro ao construir User {id}: {e}")
+                pass
         tweets = {}
 
         for id, tweet_data in global_objects.get('tweets', {}).items():
-            user_id = tweet_data['user_id_str']
-            user = users[user_id]
-            tweet = Tweet(self, build_tweet_data(tweet_data), user)
-            tweets[id] = tweet
+            try:
+                user_id = tweet_data.get('user_id_str')
+                if not user_id or user_id not in users:
+                    continue
+                user = users[user_id]
+                tweet = Tweet(self, build_tweet_data(tweet_data), user)
+                tweets[id] = tweet
+            except Exception as e:
+                # Se falhar o parse de um tweet específico, ignora e continua
+                # print(f"[DEBUG] Erro ao construir Tweet {id}: {e}")
+                pass
 
         notifications = []
 
         # Notificações padrão
         for notification in global_objects.get('notifications', {}).values():
-            user_actions = notification['template']['aggregateUserActionsV1']
-            target_objects = user_actions['targetObjects']
-            if target_objects and 'tweet' in target_objects[0]:
-                tweet_id = target_objects[0]['tweet']['id']
-                tweet = tweets.get(tweet_id)
-            else:
-                tweet = None
+            try:
+                user_actions = notification.get('template', {}).get('aggregateUserActionsV1', {})
+                target_objects = user_actions.get('targetObjects', [])
+                if target_objects and isinstance(target_objects[0], dict) and 'tweet' in target_objects[0]:
+                    tweet_id = target_objects[0]['tweet'].get('id')
+                    tweet = tweets.get(tweet_id)
+                else:
+                    tweet = None
 
-            from_users  = user_actions['fromUsers']
-            if from_users and 'user' in from_users[0]:
-                user_id = from_users[0]['user']['id']
-                user = users.get(user_id)
-            else:
-                user = None
+                from_users = user_actions.get('fromUsers', [])
+                if from_users and isinstance(from_users[0], dict) and 'user' in from_users[0]:
+                    user_id = from_users[0]['user'].get('id')
+                    user = users.get(user_id)
+                else:
+                    user = None
 
-            notifications.append(Notification(self, notification, tweet, user))
+                notifications.append(Notification(self, notification, tweet, user))
+            except Exception as e:
+                # Se falhar o parse de uma notificação específica, ignora e continua
+                # print(f"[DEBUG] Erro ao construir Notification: {e}")
+                pass
 
         # Notificações de menção vindas do timeline/instructions
-        entries = find_dict(response, 'entries', find_one=True)[0]
+        entries_result = find_dict(response, 'entries', find_one=True)
+        if not entries_result or len(entries_result) == 0:
+            entries = []
+        else:
+            entries = entries_result[0]
+        
         for entry in entries:
+            if not isinstance(entry, dict):
+                continue
             content = entry.get('content', {})
             item = content.get('item', {})
             client_event_info = item.get('clientEventInfo', {})
@@ -3882,10 +3909,14 @@ class Client:
 
         cursor_bottom_entry = [
             i for i in entries
-            if i['entryId'].startswith('cursor-bottom')
+            if isinstance(i, dict) and i.get('entryId', '').startswith('cursor-bottom')
         ]
         if cursor_bottom_entry:
-            next_cursor = find_dict(cursor_bottom_entry[0], 'value', find_one=True)[0]
+            cursor_result = find_dict(cursor_bottom_entry[0], 'value', find_one=True)
+            if cursor_result and len(cursor_result) > 0:
+                next_cursor = cursor_result[0]
+            else:
+                next_cursor = None
         else:
             next_cursor = None
 
@@ -3895,7 +3926,11 @@ class Client:
         top_cursor = None
 
         for instr_list in all_instructions_lists:
+            if not instr_list:
+                continue
             for instr in instr_list:
+                if not isinstance(instr, dict):
+                    continue
                 # Formato 1: { "type": "...", "sort_index": "..." }
                 if instr.get("type") == "TimelineMarkEntriesUnreadGreaterThanSortIndex":
                     try:
@@ -3906,7 +3941,7 @@ class Client:
                 # Formato 2: { "markEntriesUnreadGreaterThanSortIndex": { "sortIndex": "..." } }
                 if "markEntriesUnreadGreaterThanSortIndex" in instr:
                     try:
-                        val = instr["markEntriesUnreadGreaterThanSortIndex"].get("sortIndex", 0)
+                        val = instr.get("markEntriesUnreadGreaterThanSortIndex", {}).get("sortIndex", 0)
                         unread_threshold = int(val)
                     except:
                         pass
@@ -3915,30 +3950,36 @@ class Client:
         # Tenta pegar das entries já extraídas pelo Twikit primeiro (se funcionou)
         cursor_top_entries = [
             i for i in entries
-            if i['entryId'].startswith('cursor-top') or i.get('content', {}).get('cursorType') == 'Top'
+            if isinstance(i, dict) and (i.get('entryId', '').startswith('cursor-top') or i.get('content', {}).get('cursorType') == 'Top')
         ]
         if cursor_top_entries:
             try:
-                top_cursor = cursor_top_entries[0]['content']['value']
+                top_cursor = cursor_top_entries[0].get('content', {}).get('value')
             except:
                 pass
         
         # Se não achou, varre as instructions brutas
         if not top_cursor:
              for instr_list in all_instructions_lists:
+                if not instr_list:
+                    continue
                 for instr in instr_list:
+                    if not isinstance(instr, dict):
+                        continue
                     # Formato 1
                     if instr.get("type") == "TimelineAddEntries":
                         for entry in instr.get("entries", []):
+                            if not isinstance(entry, dict):
+                                continue
                             if entry.get('entryId', '').startswith('cursor-top-'):
                                 try:
-                                    top_cursor = entry['content']['value']
+                                    top_cursor = entry.get('content', {}).get('value')
                                 except:
                                     pass
                             # Tenta estrutura aninhada content->operation->cursor
-                            if not top_cursor and 'content' in entry and 'operation' in entry['content']:
+                            if not top_cursor and 'content' in entry and 'operation' in entry.get('content', {}):
                                 try:
-                                    cursor_obj = entry['content']['operation']['cursor']
+                                    cursor_obj = entry.get('content', {}).get('operation', {}).get('cursor', {})
                                     if cursor_obj.get('cursorType') == 'Top':
                                         top_cursor = cursor_obj.get('value')
                                 except:
@@ -3946,15 +3987,17 @@ class Client:
 
                     # Formato 2 { "addEntries": { "entries": [...] } }
                     if "addEntries" in instr:
-                        entries_list = instr["addEntries"].get("entries", [])
+                        entries_list = instr.get("addEntries", {}).get("entries", [])
                         for entry in entries_list:
+                            if not isinstance(entry, dict):
+                                continue
                             if entry.get('entryId', '').startswith('cursor-top-'):
                                 try:
                                     # Formato aninhado visto no log: content->operation->cursor
-                                    if 'content' in entry and 'operation' in entry['content']:
-                                         top_cursor = entry['content']['operation']['cursor']['value']
+                                    if 'content' in entry and 'operation' in entry.get('content', {}):
+                                         top_cursor = entry.get('content', {}).get('operation', {}).get('cursor', {}).get('value')
                                     else:
-                                         top_cursor = entry['content']['value']
+                                         top_cursor = entry.get('content', {}).get('value')
                                 except:
                                     pass
 
