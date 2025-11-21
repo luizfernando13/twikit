@@ -3876,11 +3876,36 @@ class Client:
         else:
             next_cursor = None
 
-        return Result(
+        # Logic to extract unread_threshold and top_cursor
+        instructions = response.get('timeline', {}).get('instructions', [])
+        unread_threshold = 0
+        top_cursor = None
+
+        for instr in instructions:
+            if instr.get("type") == "TimelineMarkEntriesUnreadGreaterThanSortIndex":
+                try:
+                    unread_threshold = int(instr.get("sort_index", 0))
+                except:
+                    pass
+
+        cursor_top_entry = [
+            i for i in entries
+            if i['entryId'].startswith('cursor-top') or i.get('content', {}).get('cursorType') == 'Top'
+        ]
+        if cursor_top_entry:
+            try:
+                top_cursor = cursor_top_entry[0]['content']['value']
+            except:
+                pass
+
+        result = Result(
             notifications,
             partial(self.get_notifications, type, count, next_cursor),
             next_cursor
         )
+        result.unread_threshold = unread_threshold
+        result.top_cursor = top_cursor
+        return result
 
     async def search_community(
         self, query: str, cursor: str | None = None
