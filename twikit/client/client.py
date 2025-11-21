@@ -3858,9 +3858,22 @@ class Client:
                 user = None
                 if tweet and hasattr(tweet, 'user'):
                     user = tweet.user
+                
+                ts_ms = entry.get('sortIndex')
+                if not ts_ms or str(ts_ms) == '0':
+                    if tweet and getattr(tweet, 'created_at', None):
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            dt = parsedate_to_datetime(tweet.created_at)
+                            ts_ms = int(dt.timestamp() * 1000)
+                        except:
+                            ts_ms = 0
+                    else:
+                        ts_ms = 0
+
                 notif_data = {
                     'id': entry.get('entryId'),
-                    'timestampMs': entry.get('sortIndex'),
+                    'timestampMs': ts_ms,
                     'icon': {'id': 'mention_icon'},
                     'message': {'text': getattr(tweet, 'full_text', '') if tweet else ''},
                     'template': {'aggregateUserActionsV1': {'targetObjects': [{'tweet': {'id': tweet_id}}] if tweet_id else [], 'fromUsers': [{'user': {'id': getattr(user, 'id', None)}}] if user else []}}
@@ -3876,27 +3889,77 @@ class Client:
         else:
             next_cursor = None
 
-        # Logic to extract unread_threshold and top_cursor
-        instructions = response.get('timeline', {}).get('instructions', [])
+        # Logic to extract unread_threshold and top_cursor using find_dict to be robust
+        all_instructions_lists = find_dict(response, 'instructions')
         unread_threshold = 0
         top_cursor = None
 
-        for instr in instructions:
-            if instr.get("type") == "TimelineMarkEntriesUnreadGreaterThanSortIndex":
-                try:
-                    unread_threshold = int(instr.get("sort_index", 0))
-                except:
-                    pass
+        for instr_list in all_instructions_lists:
+            for instr in instr_list:
+                # Formato 1: { "type": "...", "sort_index": "..." }
+                if instr.get("type") == "TimelineMarkEntriesUnreadGreaterThanSortIndex":
+                    try:
+                        val = instr.get("sort_index", 0)
+                        unread_threshold = int(val)
+                    except:
+                        pass
+                # Formato 2: { "markEntriesUnreadGreaterThanSortIndex": { "sortIndex": "..." } }
+                if "markEntriesUnreadGreaterThanSortIndex" in instr:
+                    try:
+                        val = instr["markEntriesUnreadGreaterThanSortIndex"].get("sortIndex", 0)
+                        unread_threshold = int(val)
+                    except:
+                        pass
 
-        cursor_top_entry = [
+        # Recalcula cursor top de forma mais abrangente
+        # Tenta pegar das entries já extraídas pelo Twikit primeiro (se funcionou)
+        cursor_top_entries = [
             i for i in entries
             if i['entryId'].startswith('cursor-top') or i.get('content', {}).get('cursorType') == 'Top'
         ]
-        if cursor_top_entry:
+        if cursor_top_entries:
             try:
-                top_cursor = cursor_top_entry[0]['content']['value']
+                top_cursor = cursor_top_entries[0]['content']['value']
             except:
                 pass
+        
+        # Se não achou, varre as instructions brutas
+        if not top_cursor:
+             for instr_list in all_instructions_lists:
+                for instr in instr_list:
+                    # Formato 1
+                    if instr.get("type") == "TimelineAddEntries":
+                        for entry in instr.get("entries", []):
+                            if entry.get('entryId', '').startswith('cursor-top-'):
+                                try:
+                                    top_cursor = entry['content']['value']
+                                except:
+                                    pass
+                            # Tenta estrutura aninhada content->operation->cursor
+                            if not top_cursor and 'content' in entry and 'operation' in entry['content']:
+                                try:
+                                    cursor_obj = entry['content']['operation']['cursor']
+                                    if cursor_obj.get('cursorType') == 'Top':
+                                        top_cursor = cursor_obj.get('value')
+                                except:
+                                    pass
+
+                    # Formato 2 { "addEntries": { "entries": [...] } }
+                    if "addEntries" in instr:
+                        entries_list = instr["addEntries"].get("entries", [])
+                        for entry in entries_list:
+                            if entry.get('entryId', '').startswith('cursor-top-'):
+                                try:
+                                    # Formato aninhado visto no log: content->operation->cursor
+                                    if 'content' in entry and 'operation' in entry['content']:
+                                         top_cursor = entry['content']['operation']['cursor']['value']
+                                    else:
+                                         top_cursor = entry['content']['value']
+                                except:
+                                    pass
+
+        # Ordena notificações por timestamp (mais recente primeiro) para consistência
+        notifications.sort(key=lambda x: x.timestamp_ms, reverse=True)
 
         result = Result(
             notifications,
