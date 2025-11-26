@@ -4013,6 +4013,195 @@ class Client:
         result.top_cursor = top_cursor
         return result
 
+    async def get_notifications_graphql(
+        self,
+        type: Literal['All', 'Mentions'] = 'All',
+        count: int = 40,
+        cursor: str | None = None
+    ) -> Result[Notification]:
+        """
+        Retrieve notifications using the GraphQL endpoint.
+        This endpoint has a higher rate limit (1500/15min) compared to
+        the v1.1 endpoint (180/15min).
+
+        Parameters
+        ----------
+        type : {'All', 'Mentions'}, default='All'
+            Type of notifications to retrieve.
+            All: All notifications
+            Mentions: Notifications with mentions
+        count : :class:`int`, default=40
+            Number of notifications to retrieve.
+        cursor : :class:`str`, default=None
+            Cursor for pagination.
+
+        Returns
+        -------
+        Result[:class:`Notification`]
+            List of retrieved notifications.
+
+        Examples
+        --------
+        >>> notifications = await client.get_notifications_graphql('All')
+        >>> for notification in notifications:
+        ...     print(notification)
+        <Notification id="...">
+        <Notification id="...">
+        ...
+        ...
+
+        >>> # Retrieve more notifications
+        >>> more_notifications = await notifications.next()
+        """
+        response, _ = await self.gql.get_notifications_graphql(type, count, cursor)
+
+        # Extract instructions
+        all_instructions_lists = find_dict(response, 'instructions')
+        entries = []
+        
+        for instr_list in all_instructions_lists:
+            if not instr_list:
+                continue
+            for instr in instr_list:
+                if not isinstance(instr, dict):
+                    continue
+                if instr.get('type') == 'TimelineAddEntries':
+                    entries = instr.get('entries', [])
+                    break
+                if 'addEntries' in instr:
+                    entries = instr.get('addEntries', {}).get('entries', [])
+                    break
+            if entries:
+                break
+
+        notifications = []
+        next_cursor = None
+        top_cursor = None
+        unread_threshold = 0
+
+        # Extract unread threshold
+        for instr_list in all_instructions_lists:
+            if not instr_list:
+                continue
+            for instr in instr_list:
+                if not isinstance(instr, dict):
+                    continue
+                if instr.get('type') == 'TimelineMarkEntriesUnreadGreaterThanSortIndex':
+                    try:
+                        unread_threshold = int(instr.get('sort_index', 0))
+                    except:
+                        pass
+                if 'markEntriesUnreadGreaterThanSortIndex' in instr:
+                    try:
+                        unread_threshold = int(instr.get('markEntriesUnreadGreaterThanSortIndex', {}).get('sortIndex', 0))
+                    except:
+                        pass
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get('entryId', '')
+
+            # Handle cursors
+            if entry_id.startswith('cursor-bottom'):
+                next_cursor = entry.get('content', {}).get('value')
+                # Try nested structure
+                if not next_cursor:
+                    next_cursor = entry.get('content', {}).get('operation', {}).get('cursor', {}).get('value')
+                continue
+            if entry_id.startswith('cursor-top'):
+                top_cursor = entry.get('content', {}).get('value')
+                if not top_cursor:
+                    top_cursor = entry.get('content', {}).get('operation', {}).get('cursor', {}).get('value')
+                continue
+
+            # Process notification entries
+            if entry_id.startswith('notification'):
+                try:
+                    content = entry.get('content', {})
+                    item_content = content.get('itemContent', {})
+                    
+                    # Default values
+                    notif_data = {
+                        'id': entry_id,
+                        'timestampMs': entry.get('sortIndex', 0),
+                        'icon': {'id': 'default'},
+                        'message': {'text': ''}
+                    }
+
+                    tweet = None
+                    user = None
+
+                    # Try to get notification details from various places
+                    # Method 1: clientEventInfo
+                    client_event_info = item_content.get('clientEventInfo', {})
+                    details = client_event_info.get('details', {})
+                    notification_details = details.get('notificationDetails', {})
+                    
+                    if notification_details:
+                        notif_data['icon'] = {'id': notification_details.get('icon', 'default')}
+                        notif_data['message'] = {'text': notification_details.get('text', '')}
+
+                    # Method 2: notification field
+                    notification_field = item_content.get('notification', {})
+                    if notification_field:
+                        if 'icon' in notification_field:
+                            notif_data['icon'] = notification_field.get('icon', {'id': 'default'})
+                        if 'message' in notification_field:
+                            msg = notification_field.get('message', {})
+                            if isinstance(msg, dict):
+                                notif_data['message'] = {'text': msg.get('text', '')}
+                            elif isinstance(msg, str):
+                                notif_data['message'] = {'text': msg}
+
+                    # Try to find tweet data
+                    tweet_results = find_dict(entry, 'tweet_results', find_one=True)
+                    if tweet_results:
+                        try:
+                            tweet_data = tweet_results[0].get('result', {})
+                            if tweet_data.get('__typename') == 'Tweet':
+                                user_data = tweet_data.get('core', {}).get('user_results', {}).get('result', {})
+                                if user_data:
+                                    user = User(self, user_data)
+                                tweet = Tweet(self, tweet_data, user)
+                            elif tweet_data.get('__typename') == 'TweetWithVisibilityResults':
+                                inner_tweet = tweet_data.get('tweet', {})
+                                user_data = inner_tweet.get('core', {}).get('user_results', {}).get('result', {})
+                                if user_data:
+                                    user = User(self, user_data)
+                                tweet = Tweet(self, inner_tweet, user)
+                        except Exception:
+                            pass
+
+                    # Try to find user data if not found via tweet
+                    if user is None:
+                        user_results = find_dict(entry, 'user_results', find_one=True)
+                        if user_results:
+                            try:
+                                user_data = user_results[0].get('result', {})
+                                if user_data.get('__typename') == 'User':
+                                    user = User(self, user_data)
+                            except Exception:
+                                pass
+
+                    notifications.append(Notification(self, notif_data, tweet, user))
+                except Exception:
+                    pass
+
+        # Sort notifications by timestamp (most recent first)
+        notifications.sort(key=lambda x: x.timestamp_ms, reverse=True)
+
+        result = Result(
+            notifications,
+            partial(self.get_notifications_graphql, type, count, next_cursor),
+            next_cursor,
+            partial(self.get_notifications_graphql, type, count, top_cursor),
+            top_cursor
+        )
+        result.unread_threshold = unread_threshold
+        result.top_cursor = top_cursor
+        return result
+
     async def search_community(
         self, query: str, cursor: str | None = None
     ) -> Result[Community]:
