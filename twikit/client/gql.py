@@ -11,6 +11,7 @@ from ..constants import (
     JOIN_COMMUNITY_FEATURES,
     LIST_FEATURES,
     NOTE_TWEET_FEATURES,
+    NOTIFICATIONS_FEATURES,
     SIMILAR_POSTS_FEATURES,
     TWEET_RESULT_BY_REST_ID_FEATURES,
     TWEET_RESULTS_BY_REST_IDS_FEATURES,
@@ -39,8 +40,8 @@ class Endpoint:
     DELETE_TWEET = url('VaenaVgh5q5ih7kvyVjgtg/DeleteTweet')
     USER_BY_SCREEN_NAME = url('NimuplG1OB7Fd2btCLdBOw/UserByScreenName')
     USER_BY_REST_ID = url('tD8zKvQzwY3kdx5yz6YmOw/UserByRestId')
-    TWEET_DETAIL = url('YpUuSSFtBlKZYN_ROYa9uQ/TweetDetail')
-    TWEET_RESULT_BY_REST_ID = url('Xl5pC_lBk_gcO2ItU39DQw/TweetResultByRestId')
+    TWEET_DETAIL = url('6QzqakNMdh_YzBAR9SYPkQ/TweetDetail')
+    TWEET_RESULT_BY_REST_ID = url('kLXoXTloWpv9d2FSXRg-Tg/TweetResultByRestId')
     FETCH_SCHEDULED_TWEETS = url('ITtjAzvlZni2wWXwf295Qg/FetchScheduledTweets')
     DELETE_SCHEDULED_TWEET = url('CTOVqej0JBXAZSwkp1US0g/DeleteScheduledTweet')
     RETWEETERS = url('X-XEqG5qHQSAwmvy00xfyQ/Retweeters')
@@ -99,6 +100,7 @@ class Endpoint:
     MODERATORS_SLICE_TIMELINE_QUERY = url('9KI_r8e-tgp3--N5SZYVjg/moderatorsSliceTimeline_Query')
     COMMUNITY_TWEET_SEARCH_MODULE_QUERY = url('5341rmzzvdjqfmPKfoHUBw/CommunityTweetSearchModuleQuery')
     TWEET_RESULTS_BY_REST_IDS = url('PTN9HhBAlpoCTHfspDgqLA/TweetResultsByRestIds')
+    NOTIFICATIONS_TIMELINE = url('9IJLP4m0iaUXgykjxYZS6g/NotificationsTimeline')
 
 
 class GQLClient:
@@ -262,18 +264,19 @@ class GQLClient:
     async def tweet_detail(self, tweet_id, cursor):
         variables = {
             'focalTweetId': tweet_id,
+            'rankingMode': 'Relevance',
+            'referrer': 'tweet',
             'with_rux_injections': False,
             'includePromotedContent': True,
             'withCommunity': True,
             'withQuickPromoteEligibilityTweetFields': True,
             'withBirdwatchNotes': True,
             'withVoice': True,
-            'withV2Timeline': True
         }
         if cursor is not None:
             variables['cursor'] = cursor
         params = {
-            'fieldToggles': {'withAuxiliaryUserLabels': False}
+            'fieldToggles': {'withArticleRichContentState': True, 'withArticlePlainText': False, 'withGrokAnalyze': False, 'withDisallowedReplyControls': False}
         }
         return await self.gql_get(Endpoint.TWEET_DETAIL, variables, FEATURES, extra_params=params)
 
@@ -681,6 +684,32 @@ class GQLClient:
             'withCommunity': True
         }
         return await self.gql_get(Endpoint.TWEET_RESULTS_BY_REST_IDS, variables, TWEET_RESULTS_BY_REST_IDS_FEATURES)
+
+    async def get_notifications_graphql(self, timeline_type: str = 'All', count: int = 40, cursor: str | None = None):
+        """
+        Fetch notifications using GraphQL endpoint.
+        
+        Parameters
+        ----------
+        timeline_type : str
+            Type of notifications timeline: 'All' or 'Mentions'
+        count : int
+            Number of notifications to fetch (default: 40)
+        cursor : str | None
+            Pagination cursor for fetching more results
+            
+        Returns
+        -------
+        dict
+            JSON response containing notifications timeline data.
+        """
+        variables = {
+            'timeline_type': timeline_type,
+            'count': count
+        }
+        if cursor is not None:
+            variables['cursor'] = cursor
+        return await self.gql_get(Endpoint.NOTIFICATIONS_TIMELINE, variables, NOTIFICATIONS_FEATURES)
 
     ####################
     # For guest client
