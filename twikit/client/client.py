@@ -114,7 +114,7 @@ class Client:
 
         self._token = TOKEN
         self._user_id = None
-        self._user_agent = user_agent or 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15'
+        self._user_agent = user_agent or 'TwitterAndroid/10.89.0-release.0 (310890000-r-0) G011A/9 (google;G011A;google;G011A;0;;1;2016)'
         self._act_as = None
 
         self.gql = GQLClient(self)
@@ -144,6 +144,7 @@ class Client:
 
         tid = self.client_transaction.generate_transaction_id(method=method, path=urlparse(url).path)
         headers['X-Client-Transaction-Id'] = tid
+        headers['User-Agent'] = self._user_agent
 
         cookies_backup = self.get_cookies().copy()
         response = await self.http.request(method, url, headers=headers, **kwargs)
@@ -4503,6 +4504,7 @@ class Client:
         Result[:class:`CommunityMember`]
             List of retrieved members.
         """
+        ddddd
         return await self._get_community_users(
             self.gql.members_slice_timeline_query, community_id, count, cursor
         )
